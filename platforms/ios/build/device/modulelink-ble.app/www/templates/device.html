@@ -1,0 +1,86 @@
+<ion-view view-title="Device">
+  <ion-content>
+    
+    <div class="list">
+
+      <div class="item item-divider">
+      Connection
+      </div>
+
+      <div class="item">
+      Status
+        <span class="item-note">
+          <span ng-if="device.connected">Connected</span><span ng-if="!device.connected && !device.disconnected">Configuring...</span><span ng-if="device.disconnected">Disconnected</span>
+        </span>
+      </div>
+
+      <div class="item">
+        Phone RSSI
+        <span class="item-note">
+          {{device.model.phoneRSSI}} dBm
+        </span>
+      </div>
+
+      <div class="item">
+        Module RSSI
+        <span class="item-note">
+          {{device.model.moduleRSSI}} dBm
+        </span>
+      </div>
+
+      <div class="item item-divider">
+      GPIO States
+      </div>
+
+      <div class="item">
+        Button Status
+        <span class="item-note">
+          <span ng-show="device.model.button==true">Pressed</span>
+          <span ng-show="device.model.button==false">Unpressed</span>
+        </span>
+      </div>
+
+      <ion-toggle ng-model="data.greenLED" ng-checked="data.greenLED" toggle-class="toggle-ballanced">Toggle Green LED</ion-toggle>
+
+      <ion-toggle ng-model="data.redLED" ng-checked="data.redLED" toggle-class="toggle-ballanced">Toggle Red LED</ion-toggle>
+
+      <div class="item item-divider">
+      Polled Data
+      </div>
+
+      <div class="item">
+        Temperature
+        <span class="item-note">
+          {{device.model.tempC|number:2}}&deg;C {{device.model.tempF|number:2}}&deg;F
+        </span>
+      </div>
+
+      <div class="item">
+        Battery
+        <span class="item-note">
+        {{device.model.voltage|number:2}}v
+        </span>
+      </div>
+
+      <div class="item item-divider">
+      RF Statistics
+      </div>
+
+      <div class="item">
+        Module Packets TX'd
+        <span class="item-note">
+          {{device.model.packets}}
+        </span>
+      </div>
+
+      <div class="item">
+        Phone Packets RX'd
+        <span class="item-note">
+          {{device.model.packetsReceived}}
+        </span>
+      </div>
+
+    </div>
+
+  </ion-content>
+</ion-view>

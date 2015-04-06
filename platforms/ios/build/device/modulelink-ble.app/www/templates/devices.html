@@ -1,0 +1,20 @@
+<ion-view view-title="Devices">
+  <ion-content>
+    <ion-refresher
+      pulling-text="Pull to refresh..."
+      on-refresh="startScan()">
+    </ion-refresher>
+
+    <ion-list>
+      <a class="item item-remove-animate item-avatar" ng-if="device.thisScan" ng-repeat="(address, device) in devices" type="item-text-wrap" ng-click="stopScan()" href="#/device/{{address}}">
+        <img src="img/device_icons/{{device.name}}.png" />
+        {{device.name}}
+        <p>RSSI: {{device.rssi}}</p>
+      </a>
+    </ion-list>
+
+  </ion-content>
+  <div class="bar bar-footer" style="height:60px;">
+    <button ng-click="startScan()" ng-if="!isScanning()" class="button button-block button-positive button-large" style="margin-top:2px;height:50px;font-size:20px;">Scan for Devices</button><button ng-click="stopScan()" ng-if="isScanning()" class="button button-block button-stable button-large" style="margin-top:2px;height:50px;font-size:20px;">Stop Scanning</button>
+  </div>
+</ion-view>

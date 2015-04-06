@@ -1,0 +1,19 @@
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes.dex : \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionic/keyboard/IonicKeyboard$1.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionic/keyboard/IonicKeyboard$2.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionic/keyboard/IonicKeyboard$3.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionic/keyboard/IonicKeyboard.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionicframework/modulelinkble108370/BuildConfig.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionicframework/modulelinkble108370/CordovaApp.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionicframework/modulelinkble108370/R$attr.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionicframework/modulelinkble108370/R$drawable.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionicframework/modulelinkble108370/R$string.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionicframework/modulelinkble108370/R$xml.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/ionicframework/modulelinkble108370/R.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/randdusing/bluetoothle/BluetoothLePlugin$1.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/randdusing/bluetoothle/BluetoothLePlugin$2.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/randdusing/bluetoothle/BluetoothLePlugin$3.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/randdusing/bluetoothle/BluetoothLePlugin$BluetoothGattCallbackExtends.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/com/randdusing/bluetoothle/BluetoothLePlugin.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/classes/org/apache/cordova/device/Device.class \
+/Users/MKremer/Documents/Projects/lsr/modulelink-ble/platforms/android/ant-build/dexedLibs/classes-15a8d79edc826b8d00c4087bc1b1a6e0.jar \
