@@ -1,6 +1,7 @@
+/// <reference path="../../typings/angularjs/angular.d.ts"/>
 angular.module('tiwi-ble', [])
 
-.service('$tiwiBle', ['$ble', '$timeout', '$rootScope', '$converter', '$interval', '$ionicPopup', function($ble, $timeout, $rootScope, $c, $interval, $ionicPopup){
+.service('$tiwiBle', ['$ble', '$timeout', '$rootScope', '$converter', '$interval', '$ionicPopup', '$q', function($ble, $timeout, $rootScope, $c, $interval, $ionicPopup, $q){
 
 	/*
 		Let's set up some variables that will be used throughout $tiwiBle.
@@ -9,7 +10,7 @@ angular.module('tiwi-ble', [])
 		for devices will last before terminating.
 
 	*/
-	var validNames = ["SaBLE-x","TiWi-uB1","LSR-BLE"];
+	var validNames = ["SaBLE-x","TiWi-uB1"];
 	var devices = {}, scanning = false, currentDevice, rssiInterval;
 	var SCAN_LIMIT = 10000;
 
@@ -22,10 +23,14 @@ angular.module('tiwi-ble', [])
 	*/
 	var GPIO_UUID = "3347aaa0-fb94-11e2-a8e4-f23c91aec05e";
 	var GPIO_LED = "3347aaa4-fb94-11e2-a8e4-f23c91aec05e";
+	var GPIO_BUTTON_CHECK = "3347aaa1-fb94-11e2-a8e4-f23c91aec05e";
 	var GPIO_BUTTON = "3347aaa3-fb94-11e2-a8e4-f23c91aec05e";
 
 	var BATTERY_UUID = "180F";
 	var BATTERY_VOLTAGE = "2A19";
+
+	var BATTERY_SABLE_UUID = "3347aaf0-fb94-11e2-a8e4-f23c91aec05e";
+	var BATTERY_SABLE_VOLTAGE = "3347aaf1-fb94-11e2-a8e4-f23c91aec05e";
 
 	var TEMP_UUID = "3347aac0-fb94-11e2-a8e4-f23c91aec05e";
 	var TEMP_DATA = "3347aac1-fb94-11e2-a8e4-f23c91aec05e";
@@ -34,6 +39,19 @@ angular.module('tiwi-ble', [])
 	var RANGE_UUID = "3347aab0-fb94-11e2-a8e4-f23c91aec05e";
 	var RANGE_RSSI = "3347aab1-fb94-11e2-a8e4-f23c91aec05e";
 	var RANGE_PACKETS = "3347aab2-fb94-11e2-a8e4-f23c91aec05e";
+
+	var LIGHT_UUID = "3347aae0-fb94-11e2-a8e4-f23c91aec05e";
+	var LIGHT_LUX = "3347aae1-fb94-11e2-a8e4-f23c91aec05e";
+
+	var ACCL_UUID = "3347aad0-fb94-11e2-a8e4-f23c91aec05e";
+	var ACCL_TILT = "3347aad1-fb94-11e2-a8e4-f23c91aec05e";
+	var ACCL_CONF = "3347aad2-fb94-11e2-a8e4-f23c91aec05e";
+
+	var SERIAL_UUID = "3347ab00-fb94-11e2-a8e4-f23c91aec05e";
+	var SERIAL_ACCEPT = "3347ab03-fb94-11e2-a8e4-f23c91aec05e";
+	var SERIAL_DATA = "3347ab01-fb94-11e2-a8e4-f23c91aec05e";
+	var SERIAL_SEND_DATA = "3347ab02-fb94-11e2-a8e4-f23c91aec05e";
+	var SERIAL_RECEIVE = "3347ab04-fb94-11e2-a8e4-f23c91aec05e";
 
 	/*
 		This error popup will be used throughout $tiwiBle to notify
@@ -88,6 +106,59 @@ angular.module('tiwi-ble', [])
 	}
 
 	/*
+		Queue control for serial devices.
+	*/
+	function setAccept(v){
+		var address = currentDevice;
+		var deferred = $q.defer();
+
+		$ble.write(function(resp){
+			if (v==1){
+				acceptData = true;
+			}
+			deferred.resolve(resp);
+		}, function(resp){
+			deferred.reject(resp);
+		}, {
+			"address": address,
+			"serviceUuid": SERIAL_UUID,
+			"characteristicUuid": SERIAL_ACCEPT,
+			"value": $ble.bytesToEncodedString([v])
+		});
+
+		return deferred.promise;
+	}
+	var acceptData = true;
+	function canAccept(){
+		return setAccept(1);
+	}
+	function cannotAccept(){
+		acceptData = false;
+		return setAccept(0);
+	}
+	function writeData(s, error){
+		console.log("WRITING DATA", s, error);
+		var address = currentDevice;
+		devices[address].send_queue.push({'data': [s, error], 'call': function(s2, error2){
+			cannotAccept().then(function(){
+				$ble.write(function(resp){
+					console.log("YOU'RE ALL GOOD", s);
+					canAccept();
+				}, function(resp){
+					errorPopup(error2);
+				}, {
+					"address": address,
+					"serviceUuid": SERIAL_UUID,
+					"characteristicUuid": SERIAL_SEND_DATA,
+					"value": $ble.bytesToEncodedString($ble.stringToBytes(s))
+				});
+			}, function(resp){
+				console.log("writeData Fail", resp);
+			});
+		}});
+	}
+
+	/*
 		After all services and characteristics have been discovered on
 		the module, we move on to the subscribe loop. This function
 		subscribes to various characteristics from the module, waiting
@@ -103,60 +174,176 @@ angular.module('tiwi-ble', [])
 	*/
 	var subscribeLoop = function(address){
 
-		var NUM_SUBSCRIBES = 5;
+		if (devices[address].serviceUuids.indexOf(SERIAL_UUID) > -1){
 
-		var nextSubscribe = function(){
-			devices[address].onSubscribe++
-			if (devices[address].onSubscribe < (NUM_SUBSCRIBES+1)){
-				subscribeLoop(address);
-			}else{
-				devices[address].connected = true;
-				console.log("FINISHED", devices);
-			}
-		}
+			// This device is a serial device.
 
-		switch(devices[address].onSubscribe){
-			case 0:
+			// Setup the serial device.
+			devices[address].model.packetsReceived++;
+			devices[address].model.numButtons = 2;
+			devices[address].model.hasAccelerometer = true;
+			devices[address].model.hasLux = true;
+			devices[address].model.serial = true;
 
-				/*
-					Subscribe to the battery voltage descriptor. Response values
-					are always received in Base64 encoding, so we first have to
-					switch to hex, flip the endian, convert to decimal, and divide
-					by 1000 to get the voltage.
-				*/
-
+			canAccept().then(function(){
 				$ble.subscribe(function(resp){
 
 					if (resp.status=="subscribed"){
-						nextSubscribe();
+						devices[address].connected = true;
+						console.log("FINISHED", devices);
+
+						$ble.subscribe(function(resp){
+
+							if (resp.status=="subscribed"){
+								writeData("2,1,1", "Could not subscribe to temperature.");
+								writeData("6,1,1", "Could not subscribe to accelerometer.");
+								return;
+							};
+
+							if (resp.value == "AQ=="){
+								if (acceptData == false) return;
+								var sendData = devices[address].send_queue.shift();
+								if (typeof sendData === "undefined") return;
+								sendData.call.apply(this, sendData.data);
+							}
+
+						}, function(resp){
+							errorPopup("Failed to subscribe to recieve data okay.");
+						}, {
+							"address": address,
+							"serviceUuid": SERIAL_UUID,
+							"characteristicUuid": SERIAL_RECEIVE
+						})
+
 						return;
 					}
 
-					devices[address].model.voltage = resp.value.base64ToHex().flipEndian().hexToDecimal()/1000;
+					var data = atob(resp.value).split(",");
+
+					if (data[1] != "0") return;
+
+					switch(data[0]){
+						case "0":
+							devices[address].model.voltage = data[2].hexToDecimal()/1000;
+							break;
+						case "1":
+							devices[address].model.moduleRSSI = data[2].hexToDecimal().fakeTwosCompliment();
+							devices[address].model.packets = data[3].hexToDecimal();
+							if (devices[address].model.packets < devices[address].model.packetsReceived + 1){
+								devices[address].model.packetsReceived = 0;
+							}
+							devices[address].model.packetsReceived++;
+							break;
+						case "3":
+							devices[address].model.temp = data[2].flipEndian().hexToDecimal();
+							devices[address].model.tempC = devices[address].model.temp / 256;
+							devices[address].model.tempF = (devices[address].model.tempC * 1.8)+32;
+							break;
+						case "4":
+							devices[address].model.button = (data[2] == "01" || data[2] == "03");
+							devices[address].model.button2 = (data[2] == "02" || data[2] == "03");
+							break;
+						case "7":
+							switch(data[2]){
+								case "01":
+									// FU or Face-Up State
+									devices[address].model.tilt = "Face-Up";
+									break;
+								case "02":
+									//FD or Face-Down State
+									devices[address].model.tilt = "Face-Down";
+									break;
+								case "04":
+									//UP or Up State
+									devices[address].model.tilt = "Up";
+									break;
+								case "08":
+									//DO or Down State
+									devices[address].model.tilt = "Down";
+									break;
+								case "10":
+									// RI or Right State
+									devices[address].model.tilt = "Right";
+									break;
+								case "20":
+									//LE or Left State
+									devices[address].model.tilt = "Left";
+									break;
+								default:
+									devices[address].model.tilt = resp.value.base64ToHex();
+									break;
+							}
+							break;
+						case "8":
+							var lowReg = data[2].substr(0,2).hexToBin().result.split("");
+							var highReg = data[2].substr(2,2).hexToBin().result.split("");
+
+							var m3 = parseInt(lowReg[4]);
+							var m2 = parseInt(lowReg[5]);
+							var m1 = parseInt(lowReg[6]);
+							var m0 = parseInt(lowReg[7]);
+
+							var e3 = parseInt(highReg[0]);
+							var e2 = parseInt(highReg[1]);
+							var e1 = parseInt(highReg[2]);
+							var e0 = parseInt(highReg[3]);
+							var m7 = parseInt(highReg[4]);
+							var m6 = parseInt(highReg[5]);
+							var m5 = parseInt(highReg[6]);
+							var m4 = parseInt(highReg[7]);
+
+							var exponent = (8*e3) + (4*e2) + (2*e1) + e0;
+							var mantissa = (128*m7) + (64*m6) + (32*m5) + (16*m4) + (8*m3) + (4*m2) + (2*m1) + m0;
+							var lux = Math.pow(2,exponent) * mantissa * 0.045;
+
+							devices[address].model.lux = lux;
+							break;
+					}
 
 				}, function(resp){
-					errorPopup("Failed to subscribe to voltage.");
+					errorPopup("Failed to get serial data.");
 				}, {
 					"address": address,
-					"serviceUuid": BATTERY_UUID,
-					"characteristicUuid": BATTERY_VOLTAGE
-				});
+					"serviceUuid": SERIAL_UUID,
+					"characteristicUuid": SERIAL_DATA
+				})
+			}, function(){
+				errorPopup("Failed to set serial accept.");
+			});
 
-				break;
+		}else{
 
-			case 1:
+			// This device is not a serial device.
 
-				/*
-					In order to subscribe to the temperature readings, we first
-					have to write the byte 1 to the TEMP_CONF to tell the module
-					that it should actually send subscription updates to us.
+			var NUM_SUBSCRIBES = 7;
 
-					Afterwards we will actually subscribe to temperature updates and
-					convert the value we receive into both degrees celsius and
-					degrees farenheit.
-				*/
+			var nextSubscribe = function(){
+				devices[address].onSubscribe++
+				if (devices[address].onSubscribe < (NUM_SUBSCRIBES+1)){
+					subscribeLoop(address);
+				}else{
+					devices[address].connected = true;
+					console.log("FINISHED", devices);
+				}
+			}
 
-				$ble.write(function(resp){
+			switch(devices[address].onSubscribe){
+				case 0:
+
+					/*
+						Subscribe to the battery voltage descriptor. Response values
+						are always received in Base64 encoding, so we first have to
+						switch to hex, flip the endian, convert to decimal, and divide
+						by 1000 to get the voltage.
+					*/
+
+					if (devices[address].serviceUuids.indexOf(BATTERY_SABLE_UUID) > -1){
+						var batt_uuid = BATTERY_SABLE_UUID;
+						var batt_characteristic = BATTERY_SABLE_VOLTAGE;
+					}else{
+						var batt_uuid = BATTERY_UUID;
+						var batt_characteristic = BATTERY_VOLTAGE;
+					}
 
 					$ble.subscribe(function(resp){
 
@@ -165,147 +352,349 @@ angular.module('tiwi-ble', [])
 							return;
 						}
 
-						devices[address].model.temp = resp.value.base64ToHex().flipEndian().hexToDecimal();
-						devices[address].model.tempC = devices[address].model.temp / 256;
-						devices[address].model.tempF = (devices[address].model.tempC * 1.8)+32;
+						devices[address].model.voltage = resp.value.base64ToHex().flipEndian().hexToDecimal()/1000;
 
 					}, function(resp){
-						errorPopup("Failed to subscribe to temperature.");
+						console.log("Voltage Fail", resp);
+						errorPopup("Failed to read voltage.");
+					}, {
+						"address": address,
+						"serviceUuid": batt_uuid,
+						"characteristicUuid": batt_characteristic
+					});
+
+					break;
+
+				case 1:
+
+					/*
+						In order to subscribe to the temperature readings, we first
+						have to write the byte 1 to the TEMP_CONF to tell the module
+						that it should actually send subscription updates to us.
+
+						Afterwards we will actually subscribe to temperature updates and
+						convert the value we receive into both degrees celsius and
+						degrees farenheit.
+					*/
+
+					$ble.write(function(resp){
+
+						$ble.subscribe(function(resp){
+
+							if (resp.status=="subscribed"){
+								nextSubscribe();
+								return;
+							}
+
+							devices[address].model.temp = resp.value.base64ToHex().flipEndian().hexToDecimal();
+							devices[address].model.tempC = devices[address].model.temp / 256;
+							devices[address].model.tempF = (devices[address].model.tempC * 1.8)+32;
+
+						}, function(resp){
+							errorPopup("Failed to subscribe to temperature.");
+						}, {
+							"address": address,
+							"serviceUuid": TEMP_UUID,
+							"characteristicUuid": TEMP_DATA
+						});
+
+					}, function(resp){
+						errorPopup("Failed to set temperature flag.");
 					}, {
 						"address": address,
 						"serviceUuid": TEMP_UUID,
-						"characteristicUuid": TEMP_DATA
+						"characteristicUuid": TEMP_CONF,
+						"value": $ble.bytesToEncodedString([1])
 					});
 
-				}, function(resp){
-					errorPopup("Failed to set temperature flag.");
-				}, {
-					"address": address,
-					"serviceUuid": TEMP_UUID,
-					"characteristicUuid": TEMP_CONF,
-					"value": $ble.bytesToEncodedString([1])
-				});
+					break;
 
-				break;
+				case 2:
 
-			case 2:
+					/*
+						We then subscribe to the state of the button on the module.
+						"AQ==" represents "true" in Base64, so we set the button to
+						the statement (resp.value=="AQ==") which will evaluate to 
+						true if pressed, and false if unpressed.
+					*/
 
-				/*
-					We then subscribe to the state of the button on the module.
-					"AQ==" represents "true" in Base64, so we set the button to
-					the statement (resp.value=="AQ==") which will evaluate to 
-					true if pressed, and false if unpressed.
-				*/
+					$ble.read(function(resp){
 
-				$ble.subscribe(function(resp){
+						if (resp.value == "Ag=="){
+							devices[address].model.numButtons = 2;
+						}
 
-					if (resp.status=="subscribed"){
-						nextSubscribe();
-						return;
-					}
+						$ble.subscribe(function(resp){
 
-					devices[address].model.button = (resp.value == "AQ==");
+							if (resp.status=="subscribed"){
+								nextSubscribe();
+								return;
+							}
 
-				}, function(resp){
-					errorPopup("Failed to subscribe to button status.");
-				}, {
-					"address": address,
-					"serviceUuid": GPIO_UUID,
-					"characteristicUuid": GPIO_BUTTON
-				});
+							if (devices[address].model.numButtons == 1){
+								devices[address].model.button = (resp.value == "AQ==");
+							}else{
+								devices[address].model.button = (resp.value == "AQ==" || resp.value == "Aw==");
+								devices[address].model.button2 = (resp.value == "Ag==" || resp.value == "Aw==");
+							}
 
-				break;
+							/*
+								AQ== is button1
+								AA== is no buttons
+								Ag== is button2
+								Aw== is both buttons
+							*/
 
-			case 3:
+						}, function(resp){
+							errorPopup("Failed to subscribe to button status.");
+						}, {
+							"address": address,
+							"serviceUuid": GPIO_UUID,
+							"characteristicUuid": GPIO_BUTTON
+						});
 
-				/*
-					Then we subscribe to the RSSI value taken from the module.
-					This value is sent as a "signed integer" which is technically
-					unsupported in JavaScript. To get around this fact, we use
-					a fake twos compliment (real one could be programmed if 
-					necissary) to get us the correct number.
-				*/
-
-				$ble.subscribe(function(resp){
-
-					if (resp.status=="subscribed"){
-						nextSubscribe();
-						return;
-					}
-
-					devices[address].model.moduleRSSI = resp.value.base64ToHex().hexToDecimal().fakeTwosCompliment();
-
-				}, function(resp){
-					errorPopup("Failed to subscribe to module RSSI.");
-				}, {
-					"address": address,
-					"serviceUuid": RANGE_UUID,
-					"characteristicUuid": RANGE_RSSI
-				});
-
-				break;
-
-			case 4:
-
-				/*
-					Next we subscribe to the Packet ID that is being
-					sent to us by the module. Each packet ID should be
-					an incremented number starting at 0. If we ever receive
-					a Packet with an ID less than one we have, we reset our
-					received counter.
-				*/
-
-				$ble.subscribe(function(resp){
-
-					if (resp.status=="subscribed"){
-						nextSubscribe();
-						return;
-					}
-
-					devices[address].model.packets = resp.value.base64ToHex().flipEndian().hexToDecimal();
-
-					if (devices[address].model.packets < devices[address].model.packetsReceived + 1){
-						devices[address].model.packetsReceived = 0;
-					}
-
-					devices[address].model.packetsReceived++;
-
-				}, function(resp){
-					errorPopup("Failed to subscribe to Packet ID.");
-				}, {
-					"address": address,
-					"serviceUuid": RANGE_UUID,
-					"characteristicUuid": RANGE_PACKETS
-				});
-
-				break;
-
-			case 5:
-
-				/*
-					Then we retrieve the phones RSSI value on an interval.
-					Since this value cannot be subscribed to, we retrieve
-					it every 2000ms.
-				*/
-
-				rssiInterval = $interval(function(){
-
-					$ble.rssi(function(resp){
-
-						devices[address].model.phoneRSSI = resp.rssi;
 
 					}, function(resp){
-						errorPopup("Failed to retrieve phone RSSI.");
-						$interval.cancel(rssiInterval);
+						errorPopup("Failed to detect number of buttons.");
 					}, {
-						"address": address
+						"address": address,
+						"serviceUuid": GPIO_UUID,
+						"characteristicUuid": GPIO_BUTTON_CHECK
 					})
 
-				}, 2000);
+					break;
 
-				nextSubscribe();
+				case 3:
 
-				break;
+					/*
+						Then we subscribe to the RSSI value taken from the module.
+						This value is sent as a "signed integer" which is technically
+						unsupported in JavaScript. To get around this fact, we use
+						a fake twos compliment (real one could be programmed if 
+						necissary) to get us the correct number.
+					*/
+
+					$ble.subscribe(function(resp){
+
+						if (resp.status=="subscribed"){
+							nextSubscribe();
+							return;
+						}
+
+						devices[address].model.moduleRSSI = resp.value.base64ToHex().hexToDecimal().fakeTwosCompliment();
+
+					}, function(resp){
+						errorPopup("Failed to subscribe to module RSSI.");
+					}, {
+						"address": address,
+						"serviceUuid": RANGE_UUID,
+						"characteristicUuid": RANGE_RSSI
+					});
+
+					break;
+
+				case 4:
+
+					/*
+						Next we subscribe to the Packet ID that is being
+						sent to us by the module. Each packet ID should be
+						an incremented number starting at 0. If we ever receive
+						a Packet with an ID less than one we have, we reset our
+						received counter.
+					*/
+
+					$ble.subscribe(function(resp){
+
+						if (resp.status=="subscribed"){
+							nextSubscribe();
+							return;
+						}
+
+						devices[address].model.packets = resp.value.base64ToHex().flipEndian().hexToDecimal();
+
+						if (devices[address].model.packets < devices[address].model.packetsReceived + 1){
+							devices[address].model.packetsReceived = 0;
+						}
+
+						devices[address].model.packetsReceived++;
+
+					}, function(resp){
+						errorPopup("Failed to subscribe to Packet ID.");
+					}, {
+						"address": address,
+						"serviceUuid": RANGE_UUID,
+						"characteristicUuid": RANGE_PACKETS
+					});
+
+					break;
+
+				case 5:
+
+					/*
+						Then we retrieve the phones RSSI value on an interval.
+						Since this value cannot be subscribed to, we retrieve
+						it every 2000ms.
+					*/
+
+					rssiInterval = $interval(function(){
+
+						$ble.rssi(function(resp){
+
+							devices[address].model.phoneRSSI = resp.rssi;
+
+						}, function(resp){
+							errorPopup("Failed to retrieve phone RSSI.");
+							$interval.cancel(rssiInterval);
+						}, {
+							"address": address
+						})
+
+					}, 2000);
+
+					nextSubscribe();
+
+					break;
+
+				case 6:
+
+					/*
+						If a light sensor exists on the device we are connected to
+						lets subscribe to it, then convert the hex we get into
+						the actual lux value.
+					*/
+
+					if (devices[address].serviceUuids.indexOf(LIGHT_UUID) > -1){
+
+						devices[address].model.hasLux = true;
+
+						$ble.subscribe(function(resp){
+
+							if (resp.status=="subscribed"){
+								nextSubscribe();
+								return;
+							}
+
+							/*
+								This equation is taken from pages 9 and 10 of the following:
+								http://datasheets.maximintegrated.com/en/ds/MAX44009.pdf
+								the low register (0x04) and high register (0x03) are sent to us, and then
+								we split out each "variable" and plug them into the
+								exponent mantissa equation.
+							*/
+
+							var bytes = resp.value.base64ToHex();
+							var lowReg = bytes.substr(0,2).hexToBin().result.split("");
+							var highReg = bytes.substr(2,2).hexToBin().result.split("");
+
+							var m3 = parseInt(lowReg[4]);
+							var m2 = parseInt(lowReg[5]);
+							var m1 = parseInt(lowReg[6]);
+							var m0 = parseInt(lowReg[7]);
+
+							var e3 = parseInt(highReg[0]);
+							var e2 = parseInt(highReg[1]);
+							var e1 = parseInt(highReg[2]);
+							var e0 = parseInt(highReg[3]);
+							var m7 = parseInt(highReg[4]);
+							var m6 = parseInt(highReg[5]);
+							var m5 = parseInt(highReg[6]);
+							var m4 = parseInt(highReg[7]);
+
+							var exponent = (8*e3) + (4*e2) + (2*e1) + e0;
+							var mantissa = (128*m7) + (64*m6) + (32*m5) + (16*m4) + (8*m3) + (4*m2) + (2*m1) + m0;
+							var lux = Math.pow(2,exponent) * mantissa * 0.045;
+
+							devices[address].model.lux = lux;
+
+						}, function(resp){
+							errorPopup("Failed to subscribe to light sensor.");
+						}, {
+							"address": address,
+							"serviceUuid": LIGHT_UUID,
+							"characteristicUuid": LIGHT_LUX
+						});
+
+					}else{
+						nextSubscribe();
+					}
+
+					break;
+
+				case 7:
+
+					/*
+						If the device has an accelerometer, lets subscribe to
+						it and get the direction that the device is currently
+						facing.
+					*/
+
+					if (devices[address].serviceUuids.indexOf(ACCL_UUID) > -1){
+
+						devices[address].model.hasAccelerometer = true;
+
+						$ble.write(function(resp){
+
+							$ble.subscribe(function(resp){
+
+								if (resp.status=="subscribed"){
+									nextSubscribe();
+									return;
+								}
+
+								switch(resp.value.base64ToHex()){
+									case "01":
+										// FU or Face-Up State
+										devices[address].model.tilt = "Face-Up";
+										break;
+									case "02":
+										//FD or Face-Down State
+										devices[address].model.tilt = "Face-Down";
+										break;
+									case "04":
+										//UP or Up State
+										devices[address].model.tilt = "Up";
+										break;
+									case "08":
+										//DO or Down State
+										devices[address].model.tilt = "Down";
+										break;
+									case "10":
+										// RI or Right State
+										devices[address].model.tilt = "Right";
+										break;
+									case "20":
+										//LE or Left State
+										devices[address].model.tilt = "Left";
+										break;
+									default:
+										devices[address].model.tilt = resp.value.base64ToHex();
+										break;
+								}
+
+
+							}, function(resp){
+								errorPopup("Failed to subscribe to accelerometer tilt data.");
+							}, {
+								"address": address,
+								"serviceUuid": ACCL_UUID,
+								"characteristicUuid": ACCL_TILT
+							});
+
+						}, function(resp){
+							errorPopup("Failed to set accelerometer flag.");
+						}, {
+							"address": address,
+							"serviceUuid": ACCL_UUID,
+							"characteristicUuid": ACCL_CONF,
+							"value": $ble.bytesToEncodedString([1])
+						});
+					}else{
+						nextSubscribe();
+					}
+
+					break;
+
+			}
 
 		}
 
@@ -399,6 +788,12 @@ angular.module('tiwi-ble', [])
 							devices[address].services = [];
 						}else{
 							devices[address].services = resp.services;
+							devices[address].serviceUuids = [];
+							console.log("SERVICES", resp.services);
+							for (var i=0;i<resp.services.length;i++){
+								console.log(i, resp.services[i].serviceUuid);
+								devices[address].serviceUuids.push(resp.services[i].serviceUuid);
+							}
 						}
 						devices[address].disconnected = false;
 						devices[address].model = {
@@ -408,11 +803,19 @@ angular.module('tiwi-ble', [])
 							'tempF': 0,
 							'tempC': 0,
 							'button': false,
+							'button2': false,
 							'moduleRSSI': 0,
 							'phoneRSSI': devices[address].rssi,
 							'packets': 0,
-							'packetsReceived': 0
+							'packetsReceived': 0,
+							'numButtons': 1,
+							'hasLux': false,
+							'lux': 0,
+							'hasAccelerometer': false,
+							'tilt': 0,
+							'serial': false
 						};
+						devices[address].send_queue = [];
 						devices[address].onService = 0;
 						devices[address].onSubscribe = 0;
 					}
@@ -508,16 +911,21 @@ angular.module('tiwi-ble', [])
 			off, red, green and both respectively.
 		*/
 		'changeLED': function(address, value){
-			$ble.write(function(resp){
-				devices[address].model.led = value;
-			}, function(resp){
-				errorPopup("Failed to set LED.");
-			}, {
-				"address": address,
-				"serviceUuid": GPIO_UUID,
-				"characteristicUuid": GPIO_LED,
-				"value": btoa(value)
-			})
+			if (devices[currentDevice].model.serial){
+				console.log("CHANGING LED", value);
+				writeData("5,1,"+value,"Failed to set LED :(");
+			}else{
+				$ble.write(function(resp){
+					devices[address].model.led = value;
+				}, function(resp){
+					errorPopup("Failed to set LED.");
+				}, {
+					"address": address,
+					"serviceUuid": GPIO_UUID,
+					"characteristicUuid": GPIO_LED,
+					"value": btoa(value)
+				})
+			}
 		},
 		/*
 			$tiwiBle.disconnect is supplied with a devices address. Then it attempts
@@ -665,7 +1073,8 @@ angular.module('tiwi-ble', [])
 			bleWrap(bluetoothle.rssi, success, error, params);
 		},
 		/*
-			TODO: These have to be implemented a different way.
+			TODO: These have to be implemented a different way, as they take differen
+			arguments and cannot be passed to bleWrap as is.
 		*/
 		// 'isInitialized': function(){
 		// 	return bluetoothle.isInitialized();
@@ -756,6 +1165,33 @@ angular.module('tiwi-ble', [])
 		}
 		return this;
 	}
+
+	/*
+		Turns a hexadecimal into it's binary eqivolent as a string. Result is in the format:
+		{ valid: true/false, result: 'binarystring'}
+	*/
+	String.prototype.hexToBin = function(){
+		var s = this;
+	    var i, k, part, ret = '';
+	    // lookup table for easier conversion. '0' characters are padded for '1' to '7'
+	    var lookupTable = {
+	        '0': '0000', '1': '0001', '2': '0010', '3': '0011', '4': '0100',
+	        '5': '0101', '6': '0110', '7': '0111', '8': '1000', '9': '1001',
+	        'a': '1010', 'b': '1011', 'c': '1100', 'd': '1101',
+	        'e': '1110', 'f': '1111',
+	        'A': '1010', 'B': '1011', 'C': '1100', 'D': '1101',
+	        'E': '1110', 'F': '1111'
+	    };
+	    for (i = 0; i < s.length; i += 1) {
+	        if (lookupTable.hasOwnProperty(s[i])) {
+	            ret += lookupTable[s[i]];
+	        } else {
+	            return { valid: false };
+	        }
+	    }
+	    return { valid: true, result: ret };
+	}
+
 
 	var ret = {}
 

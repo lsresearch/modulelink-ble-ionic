@@ -40,6 +40,14 @@
         </span>
       </div>
 
+      <div class="item" ng-show="device.model.numButtons==2">
+        Button 2 Status
+        <span class="item-note">
+          <span ng-show="device.model.button2==true">Pressed</span>
+          <span ng-show="device.model.button2==false">Unpressed</span>
+        </span>
+      </div>
+
       <ion-toggle ng-model="data.greenLED" ng-checked="data.greenLED" toggle-class="toggle-ballanced">Toggle Green LED</ion-toggle>
 
       <ion-toggle ng-model="data.redLED" ng-checked="data.redLED" toggle-class="toggle-ballanced">Toggle Red LED</ion-toggle>
@@ -52,6 +60,20 @@
         Temperature
         <span class="item-note">
           {{device.model.tempC|number:2}}&deg;C {{device.model.tempF|number:2}}&deg;F
+        </span>
+      </div>
+
+      <div class="item" ng-show="device.model.hasLux">
+        Light Sensor
+        <span class="item-note">
+          {{device.model.lux|number:2}} Lux
+        </span>
+      </div>
+
+      <div class="item" ng-show="device.model.hasAccelerometer">
+        Tilt Sensor
+        <span class="item-note">
+          {{device.model.tilt}}
         </span>
       </div>
 
