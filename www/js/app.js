@@ -38,10 +38,8 @@ angular.module('starter', ['ionic', 'controllers', 'tiwi-ble'])
       }
     },
     onEnter: function($tiwiBle){
-      console.log("ON ENTER", $tiwiBle, $tiwiBle.currentDeviceID());
       var currentDeviceID = $tiwiBle.currentDeviceID();
       if (currentDeviceID){
-        console.log("INSIDE CURRENT DEVICE", currentDeviceID);
         $tiwiBle.disconnect(currentDeviceID);
       }
       $tiwiBle.staleDevices();

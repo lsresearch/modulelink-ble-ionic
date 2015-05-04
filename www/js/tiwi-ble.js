@@ -1,4 +1,3 @@
-/// <reference path="../../typings/angularjs/angular.d.ts"/>
 angular.module('tiwi-ble', [])
 
 .service('$tiwiBle', ['$ble', '$timeout', '$rootScope', '$converter', '$interval', '$ionicPopup', '$q', function($ble, $timeout, $rootScope, $c, $interval, $ionicPopup, $q){
@@ -11,7 +10,7 @@ angular.module('tiwi-ble', [])
 
 	*/
 	var validNames = ["SaBLE-x","TiWi-uB1"];
-	var devices = {}, scanning = false, currentDevice, rssiInterval;
+	var devices = {}, scanning = false, currentDevice, rssiInterval, ret;
 	var SCAN_LIMIT = 10000;
 
 	/*
@@ -48,10 +47,10 @@ angular.module('tiwi-ble', [])
 	var ACCL_CONF = "3347aad2-fb94-11e2-a8e4-f23c91aec05e";
 
 	var SERIAL_UUID = "3347ab00-fb94-11e2-a8e4-f23c91aec05e";
-	var SERIAL_ACCEPT = "3347ab03-fb94-11e2-a8e4-f23c91aec05e";
+	var SERIAL_ACCEPT = "3347ab03-fb94-11e2-a8e4-f23c91aec05e"; // true if device can send to phone
 	var SERIAL_DATA = "3347ab01-fb94-11e2-a8e4-f23c91aec05e";
 	var SERIAL_SEND_DATA = "3347ab02-fb94-11e2-a8e4-f23c91aec05e";
-	var SERIAL_RECEIVE = "3347ab04-fb94-11e2-a8e4-f23c91aec05e";
+	var SERIAL_RECEIVE = "3347ab04-fb94-11e2-a8e4-f23c91aec05e"; // true if phone can send to device
 
 	/*
 		This error popup will be used throughout $tiwiBle to notify
@@ -137,23 +136,17 @@ angular.module('tiwi-ble', [])
 		return setAccept(0);
 	}
 	function writeData(s, error){
-		console.log("WRITING DATA", s, error);
 		var address = currentDevice;
 		devices[address].send_queue.push({'data': [s, error], 'call': function(s2, error2){
-			cannotAccept().then(function(){
-				$ble.write(function(resp){
-					console.log("YOU'RE ALL GOOD", s);
-					canAccept();
-				}, function(resp){
-					errorPopup(error2);
-				}, {
-					"address": address,
-					"serviceUuid": SERIAL_UUID,
-					"characteristicUuid": SERIAL_SEND_DATA,
-					"value": $ble.bytesToEncodedString($ble.stringToBytes(s))
-				});
+			$ble.write(function(resp){
+				canAccept();
 			}, function(resp){
-				console.log("writeData Fail", resp);
+				errorPopup(error2);
+			}, {
+				"address": address,
+				"serviceUuid": SERIAL_UUID,
+				"characteristicUuid": SERIAL_SEND_DATA,
+				"value": $ble.bytesToEncodedString($ble.stringToBytes(s))
 			});
 		}});
 	}
@@ -172,9 +165,12 @@ angular.module('tiwi-ble', [])
 		After all subscriptions have been completed, the devices "connected"
 		status is set to true.
 	*/
+	var fuckyou = 0;
 	var subscribeLoop = function(address){
 
 		if (devices[address].serviceUuids.indexOf(SERIAL_UUID) > -1){
+
+			console.log("SERIAL Device Found");
 
 			// This device is a serial device.
 
@@ -185,23 +181,44 @@ angular.module('tiwi-ble', [])
 			devices[address].model.hasLux = true;
 			devices[address].model.serial = true;
 
-			canAccept().then(function(){
+			// canAccept().then(function(){
 				$ble.subscribe(function(resp){
 
 					if (resp.status=="subscribed"){
+						console.log("COUNTER", devices[address].model.packets, devices[address].model.packetsReceived);
+						fuckyou=0;
 						devices[address].connected = true;
 						console.log("FINISHED", devices);
+
+						rssiInterval = $interval(function(){
+
+							$ble.rssi(function(resp){
+								devices[address].model.phoneRSSI = resp.rssi;
+
+							}, function(resp){
+								$interval.cancel(rssiInterval);
+								errorPopup("Failed to retrieve phone RSSI.");
+							}, {
+								"address": address
+							})
+
+						}, 2000);
 
 						$ble.subscribe(function(resp){
 
 							if (resp.status=="subscribed"){
 								writeData("2,1,1", "Could not subscribe to temperature.");
 								writeData("6,1,1", "Could not subscribe to accelerometer.");
+								console.log("Initial LED ", devices[address].model.led);
+								ret.changeLED(address, devices[address].model.led);
+								canAccept();
 								return;
 							};
 
 							if (resp.value == "AQ=="){
-								if (acceptData == false) return;
+								if (acceptData == true){
+									return;
+								}
 								var sendData = devices[address].send_queue.shift();
 								if (typeof sendData === "undefined") return;
 								sendData.call.apply(this, sendData.data);
@@ -218,85 +235,77 @@ angular.module('tiwi-ble', [])
 						return;
 					}
 
+					cannotAccept().then(function(){
+						canAccept();
+					});
+
 					var data = atob(resp.value).split(",");
 
 					if (data[1] != "0") return;
 
 					switch(data[0]){
 						case "0":
-							devices[address].model.voltage = data[2].hexToDecimal()/1000;
+							devices[address].model.voltage = parseFloat(data[2])/parseFloat('1000');
 							break;
 						case "1":
-							devices[address].model.moduleRSSI = data[2].hexToDecimal().fakeTwosCompliment();
-							devices[address].model.packets = data[3].hexToDecimal();
+							devices[address].model.moduleRSSI = parseInt(data[2]);
+							devices[address].model.packets = parseInt(data[3]);
 							if (devices[address].model.packets < devices[address].model.packetsReceived + 1){
+								console.log("PACKET RESET");
 								devices[address].model.packetsReceived = 0;
 							}
 							devices[address].model.packetsReceived++;
+
+							console.log(devices[address].model.packets, devices[address].model.packetsReceived)
+
+							if ((devices[address].model.packets - devices[address].model.packetsReceived) > fuckyou){
+								console.log("^^^ DIFFERENT ^^^");
+								fuckyou = devices[address].model.packets - devices[address].model.packetsReceived;
+								console.log("OFF BY", fuckyou);
+							}
 							break;
 						case "3":
-							devices[address].model.temp = data[2].flipEndian().hexToDecimal();
-							devices[address].model.tempC = devices[address].model.temp / 256;
+							devices[address].model.temp = parseFloat(data[2]);
+							devices[address].model.tempC = devices[address].model.temp / parseFloat('1000');
 							devices[address].model.tempF = (devices[address].model.tempC * 1.8)+32;
 							break;
 						case "4":
-							devices[address].model.button = (data[2] == "01" || data[2] == "03");
-							devices[address].model.button2 = (data[2] == "02" || data[2] == "03");
+							devices[address].model.button = (data[2] == "1" || data[2] == "3");
+							devices[address].model.button2 = (data[2] == "2" || data[2] == "3");
 							break;
 						case "7":
 							switch(data[2]){
-								case "01":
+								case "1":
 									// FU or Face-Up State
 									devices[address].model.tilt = "Face-Up";
 									break;
-								case "02":
+								case "2":
 									//FD or Face-Down State
 									devices[address].model.tilt = "Face-Down";
 									break;
-								case "04":
+								case "4":
 									//UP or Up State
 									devices[address].model.tilt = "Up";
 									break;
-								case "08":
+								case "8":
 									//DO or Down State
 									devices[address].model.tilt = "Down";
 									break;
-								case "10":
+								case "16":
 									// RI or Right State
 									devices[address].model.tilt = "Right";
 									break;
-								case "20":
+								case "32":
 									//LE or Left State
 									devices[address].model.tilt = "Left";
 									break;
 								default:
-									devices[address].model.tilt = resp.value.base64ToHex();
+									devices[address].model.tilt = data[2];
 									break;
 							}
 							break;
 						case "8":
-							var lowReg = data[2].substr(0,2).hexToBin().result.split("");
-							var highReg = data[2].substr(2,2).hexToBin().result.split("");
-
-							var m3 = parseInt(lowReg[4]);
-							var m2 = parseInt(lowReg[5]);
-							var m1 = parseInt(lowReg[6]);
-							var m0 = parseInt(lowReg[7]);
-
-							var e3 = parseInt(highReg[0]);
-							var e2 = parseInt(highReg[1]);
-							var e1 = parseInt(highReg[2]);
-							var e0 = parseInt(highReg[3]);
-							var m7 = parseInt(highReg[4]);
-							var m6 = parseInt(highReg[5]);
-							var m5 = parseInt(highReg[6]);
-							var m4 = parseInt(highReg[7]);
-
-							var exponent = (8*e3) + (4*e2) + (2*e1) + e0;
-							var mantissa = (128*m7) + (64*m6) + (32*m5) + (16*m4) + (8*m3) + (4*m2) + (2*m1) + m0;
-							var lux = Math.pow(2,exponent) * mantissa * 0.045;
-
-							devices[address].model.lux = lux;
+							devices[address].model.lux = parseFloat(data[2])/1000;
 							break;
 					}
 
@@ -307,11 +316,13 @@ angular.module('tiwi-ble', [])
 					"serviceUuid": SERIAL_UUID,
 					"characteristicUuid": SERIAL_DATA
 				})
-			}, function(){
-				errorPopup("Failed to set serial accept.");
-			});
+			// }, function(){
+			// 	errorPopup("Failed to set serial accept.");
+			// });
 
 		}else{
+
+			console.log("Non-Serial Device");
 
 			// This device is not a serial device.
 
@@ -323,7 +334,7 @@ angular.module('tiwi-ble', [])
 					subscribeLoop(address);
 				}else{
 					devices[address].connected = true;
-					console.log("FINISHED", devices);
+					ret.changeLED(address, devices[address].model.led);
 				}
 			}
 
@@ -355,7 +366,6 @@ angular.module('tiwi-ble', [])
 						devices[address].model.voltage = resp.value.base64ToHex().flipEndian().hexToDecimal()/1000;
 
 					}, function(resp){
-						console.log("Voltage Fail", resp);
 						errorPopup("Failed to read voltage.");
 					}, {
 						"address": address,
@@ -539,12 +549,10 @@ angular.module('tiwi-ble', [])
 					rssiInterval = $interval(function(){
 
 						$ble.rssi(function(resp){
-
 							devices[address].model.phoneRSSI = resp.rssi;
-
 						}, function(resp){
-							errorPopup("Failed to retrieve phone RSSI.");
 							$interval.cancel(rssiInterval);
+							errorPopup("Failed to retrieve phone RSSI.");
 						}, {
 							"address": address
 						})
@@ -715,7 +723,7 @@ angular.module('tiwi-ble', [])
 		Here we build an object that we are going to return, thus
 		creating publicly accessible functions for $tiwiBle.
 	*/
-	var ret = {
+	ret = {
 		/*
 			startScan makes sure that we're not already scanning and
 			that Bluetooth is innitialized. Anytime we find a device
@@ -771,11 +779,19 @@ angular.module('tiwi-ble', [])
 		*/
 		'connect': function(address){
 
+			var connectTimeoutTimer = false;
+			var connectTimeout = function(){
+				console.log("Gave up connecting to "+address);
+				ret.disconnect(address);
+			}
+
 			var connectCallback = function(resp){
 
 				console.log("CONNECTED!", resp);
 
 				if (resp.status == "connected"){
+
+					$timeout.cancel(connectTimeoutTimer);
 
 					/*
 						Whether or not we are in Android or iOS, initDevice
@@ -789,15 +805,25 @@ angular.module('tiwi-ble', [])
 						}else{
 							devices[address].services = resp.services;
 							devices[address].serviceUuids = [];
-							console.log("SERVICES", resp.services);
 							for (var i=0;i<resp.services.length;i++){
-								console.log(i, resp.services[i].serviceUuid);
 								devices[address].serviceUuids.push(resp.services[i].serviceUuid);
 							}
 						}
 						devices[address].disconnected = false;
+						if (Object.keys(devices[address]).indexOf("model") > -1){
+							console.log("SAVE LED", devices[address].model.led);
+							var set_led = devices[address].model.led;
+							var set_numButtons = devices[address].model.numButtons;
+							var set_hasLux = devices[address].model.hasLux;
+							var set_hasAccelerometer = devices[address].model.hasAccelerometer;
+						}else{
+							var set_led = 0;
+							var set_numButtons = 1;
+							var set_hasLux = false;
+							var set_hasAccelerometer = false;
+						}
 						devices[address].model = {
-							'led': 0,
+							'led': set_led,
 							'voltage': 0,
 							'temp': 0,
 							'tempF': 0,
@@ -808,10 +834,10 @@ angular.module('tiwi-ble', [])
 							'phoneRSSI': devices[address].rssi,
 							'packets': 0,
 							'packetsReceived': 0,
-							'numButtons': 1,
-							'hasLux': false,
+							'numButtons': set_numButtons,
+							'hasLux': set_hasLux,
 							'lux': 0,
-							'hasAccelerometer': false,
+							'hasAccelerometer': set_hasAccelerometer,
 							'tilt': 0,
 							'serial': false
 						};
@@ -869,10 +895,15 @@ angular.module('tiwi-ble', [])
 					
 					devices[address].disconnected = true;
 					devices[address].connected = false;
+					$interval.cancel(rssiInterval);
+
+					ret.connect(address);
 
 				}
 
 			}
+
+			connectTimeoutTimer = $timeout(connectTimeout, 10000);
 
 			if (devices[address].disconnected){
 
@@ -888,7 +919,7 @@ angular.module('tiwi-ble', [])
 					errorPopup("Failed to reconnect to device.");
 				}, {
 					"address": address
-				})
+				});
 
 			}else{
 
@@ -912,8 +943,8 @@ angular.module('tiwi-ble', [])
 		*/
 		'changeLED': function(address, value){
 			if (devices[currentDevice].model.serial){
-				console.log("CHANGING LED", value);
 				writeData("5,1,"+value,"Failed to set LED :(");
+				devices[address].model.led = value;
 			}else{
 				$ble.write(function(resp){
 					devices[address].model.led = value;
@@ -933,11 +964,13 @@ angular.module('tiwi-ble', [])
 			the interval that was being used to ping for RSSI.
 		*/
 		'disconnect': function(address){
+			if (devices[address].disconnected) return;
 			$ble.disconnect(function(resp){
 				devices[address].disconnected = true;
 				devices[address].connected = false;
 				$interval.cancel(rssiInterval);
 			}, function(resp){
+				$interval.cancel(rssiInterval);
 				errorPopup("Failed to disconnect from device.");
 			}, {
 				'address': address
@@ -964,7 +997,6 @@ angular.module('tiwi-ble', [])
 		*/
 		'staleDevices': function(){
 			for (var key in devices){
-				console.log(key);
 				devices[key].thisScan = false;
 			}
 		},
