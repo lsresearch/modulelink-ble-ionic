@@ -1,6 +1,6 @@
-angular.module('tiwi-ble', [])
+angular.module('tiwi-ble', ['ble', 'serial-stack'])
 
-.service('$tiwiBle', ['$ble', '$timeout', '$rootScope', '$converter', '$interval', '$ionicPopup', '$q', function($ble, $timeout, $rootScope, $c, $interval, $ionicPopup, $q){
+.service('$tiwiBle', ['$ble', '$timeout', '$rootScope', '$converter', '$interval', '$ionicPopup', '$q', '$serialStack', function($ble, $timeout, $rootScope, $c, $interval, $ionicPopup, $q, $serialStack){
 
 	/*
 		Let's set up some variables that will be used throughout $tiwiBle.
@@ -105,53 +105,6 @@ angular.module('tiwi-ble', [])
 	}
 
 	/*
-		Queue control for serial devices.
-	*/
-	function setAccept(v){
-		var address = currentDevice;
-		var deferred = $q.defer();
-
-		$ble.write(function(resp){
-			if (v==1){
-				acceptData = true;
-			}
-			deferred.resolve(resp);
-		}, function(resp){
-			deferred.reject(resp);
-		}, {
-			"address": address,
-			"serviceUuid": SERIAL_UUID,
-			"characteristicUuid": SERIAL_ACCEPT,
-			"value": $ble.bytesToEncodedString([v])
-		});
-
-		return deferred.promise;
-	}
-	var acceptData = true;
-	function canAccept(){
-		return setAccept(1);
-	}
-	function cannotAccept(){
-		acceptData = false;
-		return setAccept(0);
-	}
-	function writeData(s, error){
-		var address = currentDevice;
-		devices[address].send_queue.push({'data': [s, error], 'call': function(s2, error2){
-			$ble.write(function(resp){
-				canAccept();
-			}, function(resp){
-				errorPopup(error2);
-			}, {
-				"address": address,
-				"serviceUuid": SERIAL_UUID,
-				"characteristicUuid": SERIAL_SEND_DATA,
-				"value": $ble.bytesToEncodedString($ble.stringToBytes(s))
-			});
-		}});
-	}
-
-	/*
 		After all services and characteristics have been discovered on
 		the module, we move on to the subscribe loop. This function
 		subscribes to various characteristics from the module, waiting
@@ -165,160 +118,102 @@ angular.module('tiwi-ble', [])
 		After all subscriptions have been completed, the devices "connected"
 		status is set to true.
 	*/
-	var fuckyou = 0;
 	var subscribeLoop = function(address){
+
+		console.log("SERVICE UUIDS", devices[address]);
 
 		if (devices[address].serviceUuids.indexOf(SERIAL_UUID) > -1){
 
-			console.log("SERIAL Device Found");
+			console.log("SERIAL DEVICE FOUND");
 
-			// This device is a serial device.
-
-			// Setup the serial device.
 			devices[address].model.packetsReceived++;
 			devices[address].model.numButtons = 2;
 			devices[address].model.hasAccelerometer = true;
 			devices[address].model.hasLux = true;
 			devices[address].model.serial = true;
 
-			// canAccept().then(function(){
-				$ble.subscribe(function(resp){
+			$serialStack.startStack(address, function(resp){
 
-					if (resp.status=="subscribed"){
-						console.log("COUNTER", devices[address].model.packets, devices[address].model.packetsReceived);
-						fuckyou=0;
-						devices[address].connected = true;
-						console.log("FINISHED", devices);
+				// console.log("SERIAL_DATA", atob(resp.value));
 
-						rssiInterval = $interval(function(){
+				var data = atob(resp.value).split(",");
 
-							$ble.rssi(function(resp){
-								devices[address].model.phoneRSSI = resp.rssi;
+				if (data[1] != "0") return;
 
-							}, function(resp){
-								$interval.cancel(rssiInterval);
-								errorPopup("Failed to retrieve phone RSSI.");
-							}, {
-								"address": address
-							})
+				switch(data[0]){
+					case "0":
+						devices[address].model.voltage = parseFloat(data[2])/parseFloat('1000');
+						break;
+					case "1":
+						devices[address].model.moduleRSSI = parseInt(data[2]);
+						devices[address].model.packets = parseInt(data[3]);
+						if (devices[address].model.packets < devices[address].model.packetsReceived + 1){
+							console.log("PACKET RESET");
+							devices[address].model.packetsReceived = 0;
+						}
+						devices[address].model.packetsReceived++;
+						break;
+					case "3":
+						devices[address].model.temp = parseFloat(data[2]);
+						devices[address].model.tempC = devices[address].model.temp / parseFloat('1000');
+						devices[address].model.tempF = (devices[address].model.tempC * 1.8)+32;
+						break;
+					case "4":
+						devices[address].model.button = (data[2] == "1" || data[2] == "3");
+						devices[address].model.button2 = (data[2] == "2" || data[2] == "3");
+						break;
+					case "7":
+						switch(data[2]){
+							case "1":
+								// FU or Face-Up State
+								devices[address].model.tilt = "Face-Up";
+								break;
+							case "2":
+								//FD or Face-Down State
+								devices[address].model.tilt = "Face-Down";
+								break;
+							case "4":
+								//UP or Up State
+								devices[address].model.tilt = "Up";
+								break;
+							case "8":
+								//DO or Down State
+								devices[address].model.tilt = "Down";
+								break;
+							case "16":
+								// RI or Right State
+								devices[address].model.tilt = "Right";
+								break;
+							case "32":
+								//LE or Left State
+								devices[address].model.tilt = "Left";
+								break;
+							default:
+								devices[address].model.tilt = data[2];
+								break;
+						}
+						break;
+					case "8":
+						devices[address].model.lux = parseFloat(data[2])/1000;
+						break;
+				}
+			}, function(){
+				rssiInterval = $interval(function(){
 
-						}, 2000);
+				$ble.rssi(function(resp){
+						devices[address].model.phoneRSSI = resp.rssi;
+					}, function(resp){
+						$interval.cancel(rssiInterval);
+						errorPopup("Failed to retrieve phone RSSI.");
+					}, {
+						"address": address
+					})
 
-						$ble.subscribe(function(resp){
+				}, 2000);
 
-							if (resp.status=="subscribed"){
-								writeData("2,1,1", "Could not subscribe to temperature.");
-								writeData("6,1,1", "Could not subscribe to accelerometer.");
-								console.log("Initial LED ", devices[address].model.led);
-								ret.changeLED(address, devices[address].model.led);
-								canAccept();
-								return;
-							};
-
-							if (resp.value == "AQ=="){
-								if (acceptData == true){
-									return;
-								}
-								var sendData = devices[address].send_queue.shift();
-								if (typeof sendData === "undefined") return;
-								sendData.call.apply(this, sendData.data);
-							}
-
-						}, function(resp){
-							errorPopup("Failed to subscribe to recieve data okay.");
-						}, {
-							"address": address,
-							"serviceUuid": SERIAL_UUID,
-							"characteristicUuid": SERIAL_RECEIVE
-						})
-
-						return;
-					}
-
-					cannotAccept().then(function(){
-						canAccept();
-					});
-
-					var data = atob(resp.value).split(",");
-
-					if (data[1] != "0") return;
-
-					switch(data[0]){
-						case "0":
-							devices[address].model.voltage = parseFloat(data[2])/parseFloat('1000');
-							break;
-						case "1":
-							devices[address].model.moduleRSSI = parseInt(data[2]);
-							devices[address].model.packets = parseInt(data[3]);
-							if (devices[address].model.packets < devices[address].model.packetsReceived + 1){
-								console.log("PACKET RESET");
-								devices[address].model.packetsReceived = 0;
-							}
-							devices[address].model.packetsReceived++;
-
-							console.log(devices[address].model.packets, devices[address].model.packetsReceived)
-
-							if ((devices[address].model.packets - devices[address].model.packetsReceived) > fuckyou){
-								console.log("^^^ DIFFERENT ^^^");
-								fuckyou = devices[address].model.packets - devices[address].model.packetsReceived;
-								console.log("OFF BY", fuckyou);
-							}
-							break;
-						case "3":
-							devices[address].model.temp = parseFloat(data[2]);
-							devices[address].model.tempC = devices[address].model.temp / parseFloat('1000');
-							devices[address].model.tempF = (devices[address].model.tempC * 1.8)+32;
-							break;
-						case "4":
-							devices[address].model.button = (data[2] == "1" || data[2] == "3");
-							devices[address].model.button2 = (data[2] == "2" || data[2] == "3");
-							break;
-						case "7":
-							switch(data[2]){
-								case "1":
-									// FU or Face-Up State
-									devices[address].model.tilt = "Face-Up";
-									break;
-								case "2":
-									//FD or Face-Down State
-									devices[address].model.tilt = "Face-Down";
-									break;
-								case "4":
-									//UP or Up State
-									devices[address].model.tilt = "Up";
-									break;
-								case "8":
-									//DO or Down State
-									devices[address].model.tilt = "Down";
-									break;
-								case "16":
-									// RI or Right State
-									devices[address].model.tilt = "Right";
-									break;
-								case "32":
-									//LE or Left State
-									devices[address].model.tilt = "Left";
-									break;
-								default:
-									devices[address].model.tilt = data[2];
-									break;
-							}
-							break;
-						case "8":
-							devices[address].model.lux = parseFloat(data[2])/1000;
-							break;
-					}
-
-				}, function(resp){
-					errorPopup("Failed to get serial data.");
-				}, {
-					"address": address,
-					"serviceUuid": SERIAL_UUID,
-					"characteristicUuid": SERIAL_DATA
-				})
-			// }, function(){
-			// 	errorPopup("Failed to set serial accept.");
-			// });
+				devices[address].connected = true;
+				console.log("FINISHED", devices);
+			});
 
 		}else{
 
@@ -929,7 +824,15 @@ angular.module('tiwi-ble', [])
 				*/
 
 				$ble.connect(connectCallback, function(resp){
+					console.log("SAD FACE", resp);
 					errorPopup("Failed to connect to device.");
+
+					// devices[address].disconnected = true;
+					// devices[address].connected = false;
+					// $interval.cancel(rssiInterval);
+
+					// ret.connect(address);
+
 				}, {
 					"address": address
 				});
@@ -943,7 +846,8 @@ angular.module('tiwi-ble', [])
 		*/
 		'changeLED': function(address, value){
 			if (devices[currentDevice].model.serial){
-				writeData("5,1,"+value,"Failed to set LED :(");
+				// writeData("5,1,"+value,"Failed to set LED :(");
+				$serialStack.changeLED(value);
 				devices[address].model.led = value;
 			}else{
 				$ble.write(function(resp){
@@ -1010,132 +914,6 @@ angular.module('tiwi-ble', [])
 	}
 
 	return ret;
-
-}])
-
-.service('$ble', ['$timeout', '$rootScope', function($timeout, $rootScope){
-
-	/*
-
-		This is just a wrapper for the com.randdusing.bluetoothle module
-		to make callbacks execute in Angulars scope. You can find docs
-		at:
-
-		https://github.com/randdusing/BluetoothLE
-
-		or the specific commit that was included in this app:
-
-		https://github.com/randdusing/BluetoothLE/tree/1b6bf490c735ce9c619ccb650bd9ca7929084b7a
-
-	*/
-
-	var bleWrap = function(command, success, error, params){
-		if (typeof success === "undefined") success = function(){};
-		if (typeof error === "undefined") error = function(){};
-		command.apply(this, [function(resp){
-			$rootScope.$apply(function(){
-				success(resp);
-			});
-		}, function(resp){
-			$rootScope.$apply(function(){
-				error(resp);
-			});
-		}, params]);
-	}
-
-	return {
-		'initialize': function(success, error, params){
-			bleWrap(bluetoothle.initialize, success, error, params);
-		},
-		'enable': function(success, error){
-			bleWrap(bluetoothle.enable, success, error);
-		},
-		'disable': function(success, error){
-			bleWrap(bluetoothle.disable, success, error);
-		},
-		'startScan': function(success, error, params){
-			bleWrap(bluetoothle.startScan, success, error, params);
-		},
-		'stopScan': function(success, error){
-			bleWrap(bluetoothle.stopScan, success, error);
-		},
-		'retrieveConnected': function(success, error, params){
-			bleWrap(bluetoothle.retrieveConnected, success, error, params);
-		},
-		'connect': function(success, error, params){
-			bleWrap(bluetoothle.connect, success, error, params);
-		},
-		'reconnect': function(success, error, params){
-			bleWrap(bluetoothle.reconnect, success, error, params);
-		},
-		'disconnect': function(success, error, params){
-			bleWrap(bluetoothle.disconnect, success, error, params);
-		},
-		'close': function(success, error, params){
-			bleWrap(bluetoothle.close, success, error, params);
-		},
-		'discover': function(success, error, params){
-			bleWrap(bluetoothle.discover, success, error, params);
-		},
-		'services': function(success, error, params){
-			bleWrap(bluetoothle.services, success, error, params);
-		},
-		'characteristics': function(success, error, params){
-			bleWrap(bluetoothle.characteristics, success, error, params);
-		},
-		'descriptors': function(success, error, params){
-			bleWrap(bluetoothle.descriptors, success, error, params);
-		},
-		'read': function(success, error, params){
-			bleWrap(bluetoothle.read, success, error, params);
-		},
-		'subscribe': function(success, error, params){
-			bleWrap(bluetoothle.subscribe, success, error, params);
-		},
-		'unsubscribe': function(success, error, params){
-			bleWrap(bluetoothle.unsubscribe, success, error, params);
-		},
-		'write': function(success, error, params){
-			bleWrap(bluetoothle.write, success, error, params);
-		},
-		'readDescriptor': function(success, error, params){
-			bleWrap(bluetoothle.readDescriptor, success, error, params);
-		},
-		'rssi': function(success, error, params){
-			bleWrap(bluetoothle.rssi, success, error, params);
-		},
-		/*
-			TODO: These have to be implemented a different way, as they take differen
-			arguments and cannot be passed to bleWrap as is.
-		*/
-		// 'isInitialized': function(){
-		// 	return bluetoothle.isInitialized();
-		// },
-		// 'isScanning': function(){
-		// 	return bluetoothle.isScanning();
-		// },
-		// 'isConnected': function(params){
-		// 	return bluetoothle.isConnected(params);
-		// },
-		// 'isDiscovered': function(params){
-		// 	return bluetoothle.isDiscovered(params);
-		// },
-		'requestConnectionPriority': function(success, error, params){
-			bleWrap(bluetoothle.requestConnectionPriority, success, error, params);
-		},
-		'encodedStringToBytes': function(s){
-			return bluetoothle.encodedStringToBytes(s);
-		},
-		'bytesToEncodedString': function(b){
-			return bluetoothle.bytesToEncodedString(b);
-		},
-		'stringToBytes': function(s){
-			return bluetoothle.stringToBytes(s);
-		},
-		'bytesToString': function(b){
-			return bluetoothle.bytesToString(b);
-		}
-	}
 
 }])
 
