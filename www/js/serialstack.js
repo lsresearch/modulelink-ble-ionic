@@ -139,32 +139,6 @@ angular.module('serial-stack', ['ble'])
 					setSerialAccept(1);
 				});
 
-				// var startTime = Date.now();
-
-				// $ble.write(function(){
-				// 	onData(resp);
-				// 	$ble.write(function(){
-				// 		console.log("TIME FOR LOOP", (Date.now() - startTime));
-				// 	}, function(resp){
-				// 		console.error("SERIAL_ACCEPT", resp);
-				// 	}, {
-				// 		"address": address,
-				// 		"serviceUuid": SERIAL_UUID,
-				// 		"characteristicUuid": SERIAL_ACCEPT,
-				// 		"value": $ble.bytesToEncodedString([1]),
-				// 		// "type": "noresponse"
-				// 	});
-				// }, function(resp){
-				// 	console.error("SERIAL_ACCEPT", resp);
-				// }, {
-				// 	"address": address,
-				// 	"serviceUuid": SERIAL_UUID,
-				// 	"characteristicUuid": SERIAL_ACCEPT,
-				// 	"value": $ble.bytesToEncodedString([0]),
-				// 	// "type": "noresponse"
-				// });
-
-
 			}, function(){
 				console.error("SERIAL_DATA");
 			}, {
