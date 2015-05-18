@@ -10,7 +10,7 @@ angular.module('tiwi-ble', ['ble', 'serial-stack'])
 
 	*/
 	var validNames = ["SaBLE-x","TiWi-uB1"];
-	var devices = {}, scanning = false, currentDevice, rssiInterval, ret;
+	var devices = {}, scanning = false, currentDevice, rssiInterval, ret, connectTimeoutTimer = false, stopScanTimer;
 	var SCAN_LIMIT = 10000;
 
 	/*
@@ -647,17 +647,20 @@ angular.module('tiwi-ble', ['ble', 'serial-stack'])
 			  				devices[resp.address].thisScan = true;
 			  			}
 
-			  		}, function(){
+			  		}, function(resp){
+			  			console.log("DONE SCANNING STARTSCAN", resp);
 			  			doneScanning();
 			  		});
 
-			  		$timeout(ret.stopScan, SCAN_LIMIT);
+			  		stopScanTimer = $timeout(ret.stopScan, SCAN_LIMIT);
 
 			  	}else{
+			  		console.log("DONE SCANNING STATUS", resp.status);
 			  		doneScanning();
 			  	}
 
-			  }, function(){
+			  }, function(resp){
+			  	console.log("DONE SCANNING ERROR?", resp);
 			  	doneScanning();
 			  });
 		},
@@ -665,6 +668,7 @@ angular.module('tiwi-ble', ['ble', 'serial-stack'])
 			Stops scanning for devices.
 		*/
 		'stopScan': function(){
+			$timeout.cancel(stopScanTimer);
 			doneScanning();
 			$ble.stopScan();
 		},
@@ -674,7 +678,6 @@ angular.module('tiwi-ble', ['ble', 'serial-stack'])
 		*/
 		'connect': function(address){
 
-			var connectTimeoutTimer = false;
 			var connectTimeout = function(){
 				console.log("Gave up connecting to "+address);
 				ret.disconnect(address);
@@ -792,6 +795,8 @@ angular.module('tiwi-ble', ['ble', 'serial-stack'])
 					devices[address].connected = false;
 					$interval.cancel(rssiInterval);
 
+					console.log("Disconnected");
+
 					ret.connect(address);
 
 				}
@@ -811,7 +816,11 @@ angular.module('tiwi-ble', ['ble', 'serial-stack'])
 				*/
 
 				$ble.reconnect(connectCallback, function(resp){
+					devices[address].disconnected = true;
+					devices[address].connected = false;
+					$interval.cancel(rssiInterval);
 					errorPopup("Failed to reconnect to device.");
+					console.error("Failed Reconnect", resp);
 				}, {
 					"address": address
 				});
@@ -824,14 +833,11 @@ angular.module('tiwi-ble', ['ble', 'serial-stack'])
 				*/
 
 				$ble.connect(connectCallback, function(resp){
-					console.log("SAD FACE", resp);
+					devices[address].disconnected = true;
+					devices[address].connected = false;
+					$interval.cancel(rssiInterval);
+					console.log("Failed Initial Connect", resp);
 					errorPopup("Failed to connect to device.");
-
-					// devices[address].disconnected = true;
-					// devices[address].connected = false;
-					// $interval.cancel(rssiInterval);
-
-					// ret.connect(address);
 
 				}, {
 					"address": address
@@ -868,14 +874,16 @@ angular.module('tiwi-ble', ['ble', 'serial-stack'])
 			the interval that was being used to ping for RSSI.
 		*/
 		'disconnect': function(address){
-			if (devices[address].disconnected) return;
+			$timeout.cancel(connectTimeoutTimer);
 			$ble.disconnect(function(resp){
 				devices[address].disconnected = true;
 				devices[address].connected = false;
 				$interval.cancel(rssiInterval);
 			}, function(resp){
+				devices[address].disconnected = true;
+				devices[address].connected = false;
 				$interval.cancel(rssiInterval);
-				errorPopup("Failed to disconnect from device.");
+				// errorPopup("Failed to disconnect from device.");
 			}, {
 				'address': address
 			});
