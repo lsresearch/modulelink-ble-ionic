@@ -7,7 +7,7 @@
 
     <ion-list>
       <a class="item item-remove-animate item-avatar" ng-if="device.thisScan" ng-repeat="(address, device) in devices" type="item-text-wrap" ng-click="stopScan()" href="#/device/{{address}}">
-        <img src="img/device_icons/{{device.name}}.png" />
+        <img src="img/device_icons/{{device.type}}.png" />
         {{device.name}}
         <p>RSSI: {{device.rssi}}</p>
       </a>

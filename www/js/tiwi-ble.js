@@ -639,8 +639,16 @@ angular.module('tiwi-ble', ['ble', 'serial-stack'])
 
 			  		$ble.startScan(function(resp){
 			  			if (typeof devices[resp.address] === "undefined"){
-			  				if (validNames.indexOf(resp.name) == -1) return;
+			  				// if (validNames.indexOf(resp.name) == -1) return;
+			  				var found = false;
+			  				for (var i=0;i<validNames.length;i++){
+			  					if (resp.name.indexOf(validNames[i]) != -1){
+			  						found = validNames[i];
+			  					}
+			  				}
+			  				if (found == false) return;
 			  				devices[resp.address] = resp;
+			  				devices[resp.address].type = found;
 			  				resp.thisScan = true;
 			  			}else{
 			  				devices[resp.address].rssi = resp.rssi;
